@@ -4,6 +4,14 @@ import MainLayout from "./layout/MainLayout";
 import Dashboard from "./pages/Dashboard";
 import Products from "./pages/Products";
 import Movements from "./pages/Movements";
+import Categories from "./pages/Categories";
+import Warehouses from "./pages/Warehouses";
+import Inbound from "./pages/Inbound";
+import Outbound from "./pages/Outbound";
+import Suppliers from "./pages/Suppliers";
+import PurchaseOrders from "./pages/PurchaseOrders";
+import Reports from "./pages/Reports";
+import Settings from "./pages/Settings";
 
 // placeholders rápidos (si aún no los creas)
 const Placeholder = ({ title }) => (
@@ -23,14 +31,14 @@ export default function App() {
         <Route path="/movements" element={<Movements />} />
 
         {/* placeholders (creamos estas pages luego) */}
-        <Route path="/categories" element={<Placeholder title="Categorías" />} />
-        <Route path="/warehouses" element={<Placeholder title="Almacenes" />} />
-        <Route path="/inbound" element={<Placeholder title="Entradas" />} />
-        <Route path="/outbound" element={<Placeholder title="Salidas" />} />
-        <Route path="/suppliers" element={<Placeholder title="Proveedores" />} />
-        <Route path="/purchase-orders" element={<Placeholder title="Órdenes de compra" />} />
-        <Route path="/reports" element={<Placeholder title="Reportes" />} />
-        <Route path="/settings" element={<Placeholder title="Configuración" />} />
+        <Route path="/categories" element={<Categories />} />
+        <Route path="/warehouses" element={<Warehouses />} />
+        <Route path="/inbound" element={<Inbound />} />
+        <Route path="/outbound" element={<Outbound />} />
+        <Route path="/suppliers" element={<Suppliers />} />
+        <Route path="/purchase-orders" element={<PurchaseOrders />} />
+        <Route path="/reports" element={<Reports />} />
+        <Route path="/settings" element={<Settings />} />
 
         {/* fallback */}
         <Route path="*" element={<Placeholder title="404" />} />
