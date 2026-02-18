@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -21,10 +21,14 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import { ROUTES } from "../routes";
+import { useAuth } from "../auth/AuthProvider";
+import { supabase } from "../lib/supabase";
 
 const cn = (...xs) => xs.filter(Boolean).join(" ");
 
 export default function Sidebar() {
+  const { user } = useAuth();
+
   // Rail siempre visible. Panel grande: hover o pinned.
   const [pinned, setPinned] = useState(true);
   const [hovering, setHovering] = useState(false);
@@ -39,22 +43,45 @@ export default function Sidebar() {
   });
 
   const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef(null);
 
   const nav = useMemo(
     () => [
       {
         key: "home",
         label: "Inicio",
-        items: [{ key: "dashboard", label: "Dashboard", icon: LayoutDashboard, to: ROUTES.dashboard }],
+        items: [
+          {
+            key: "dashboard",
+            label: "Dashboard",
+            icon: LayoutDashboard,
+            to: ROUTES.dashboard,
+          },
+        ],
       },
       {
         key: "inventory",
         label: "Inventario",
         collapsible: true,
         items: [
-          { key: "products", label: "Productos", icon: Package, to: ROUTES.products },
-          { key: "categories", label: "Categorías", icon: Tags, to: ROUTES.categories },
-          { key: "warehouses", label: "Almacenes", icon: Warehouse, to: ROUTES.warehouses },
+          {
+            key: "products",
+            label: "Productos",
+            icon: Package,
+            to: ROUTES.products,
+          },
+          {
+            key: "categories",
+            label: "Categorías",
+            icon: Tags,
+            to: ROUTES.categories,
+          },
+          {
+            key: "warehouses",
+            label: "Almacenes",
+            icon: Warehouse,
+            to: ROUTES.warehouses,
+          },
         ],
       },
       {
@@ -62,9 +89,24 @@ export default function Sidebar() {
         label: "Operaciones",
         collapsible: true,
         items: [
-          { key: "inbound", label: "Entradas", icon: ArrowDownToLine, to: ROUTES.inbound },
-          { key: "outbound", label: "Salidas", icon: ArrowUpFromLine, to: ROUTES.outbound },
-          { key: "movements", label: "Movimientos", icon: ListOrdered, to: ROUTES.movements },
+          {
+            key: "inbound",
+            label: "Entradas",
+            icon: ArrowDownToLine,
+            to: ROUTES.inbound,
+          },
+          {
+            key: "outbound",
+            label: "Salidas",
+            icon: ArrowUpFromLine,
+            to: ROUTES.outbound,
+          },
+          {
+            key: "movements",
+            label: "Movimientos",
+            icon: ListOrdered,
+            to: ROUTES.movements,
+          },
         ],
       },
       {
@@ -72,24 +114,49 @@ export default function Sidebar() {
         label: "Gestión",
         collapsible: true,
         items: [
-          { key: "suppliers", label: "Proveedores", icon: Truck, to: ROUTES.suppliers },
-          { key: "purchase_orders", label: "Órdenes de compra", icon: Boxes, badge: "Soon", to: ROUTES.purchase_orders },
+          {
+            key: "suppliers",
+            label: "Proveedores",
+            icon: Truck,
+            to: ROUTES.suppliers,
+          },
+          {
+            key: "purchase_orders",
+            label: "Órdenes de compra",
+            icon: Boxes,
+            badge: "Soon",
+            to: ROUTES.purchase_orders,
+          },
         ],
       },
       {
         key: "insights",
         label: "Insights",
         collapsible: true,
-        items: [{ key: "reports", label: "Reportes", icon: BarChart3, to: ROUTES.reports }],
+        items: [
+          {
+            key: "reports",
+            label: "Reportes",
+            icon: BarChart3,
+            to: ROUTES.reports,
+          },
+        ],
       },
       {
         key: "system",
         label: "Sistema",
         collapsible: true,
-        items: [{ key: "settings", label: "Configuración", icon: Settings, to: ROUTES.settings }],
+        items: [
+          {
+            key: "settings",
+            label: "Configuración",
+            icon: Settings,
+            to: ROUTES.settings,
+          },
+        ],
       },
     ],
-    []
+    [],
   );
 
   const railItems = useMemo(
@@ -101,10 +168,45 @@ export default function Sidebar() {
       { key: "notifications", icon: Bell, to: ROUTES.settings }, // placeholder
       { key: "settings", icon: Settings, to: ROUTES.settings },
     ],
-    []
+    [],
   );
 
   const toggleGroup = (key) => setOpenGroups((s) => ({ ...s, [key]: !s[key] }));
+
+  // ---- Mostrar nombre/email real del usuario ----
+  const displayName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    (user?.email ? user.email.split("@")[0] : "Usuario");
+
+  //iniciales para el avatar
+  const initials = getInitials(displayName || email);
+
+  const email = user?.email || "";
+
+  // ---- Cerrar popup al click fuera ----
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!profileOpen) return;
+      if (!profileRef.current) return;
+      if (!profileRef.current.contains(e.target)) setProfileOpen(false);
+    }
+
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [profileOpen]);
+
+  // ---- Logout real ----
+  async function logout() {
+    try {
+      await supabase.auth.signOut();
+      setProfileOpen(false);
+      // RequireAuth se encargará de redirigir a /auth al quedar user=null
+    } catch (e) {
+      console.error(e);
+      alert(e?.message || "Error cerrando sesión");
+    }
+  }
 
   return (
     <aside className="flex h-screen sticky top-0">
@@ -134,7 +236,7 @@ export default function Sidebar() {
                     "h-11 w-11 rounded-2xl flex items-center justify-center transition",
                     isActive
                       ? "bg-slate-900 text-white shadow-sm"
-                      : "bg-transparent text-slate-600 hover:bg-slate-100"
+                      : "bg-transparent text-slate-600 hover:bg-slate-100",
                   )
                 }
                 title={it.key}
@@ -151,32 +253,60 @@ export default function Sidebar() {
             className="w-full h-11 rounded-2xl border border-slate-200 bg-white shadow-sm flex items-center justify-center hover:bg-slate-50"
             title={pinned ? "Unpin sidebar" : "Pin sidebar"}
           >
-            {pinned ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeftOpen className="h-5 w-5" />}
+            {pinned ? (
+              <PanelLeftClose className="h-5 w-5" />
+            ) : (
+              <PanelLeftOpen className="h-5 w-5" />
+            )}
           </button>
 
-          <div className="mt-3 relative">
+          <div className="mt-3 relative" ref={profileRef}>
             <button
               onClick={() => setProfileOpen((v) => !v)}
               className="w-full h-11 rounded-2xl bg-slate-100 flex items-center justify-center hover:bg-slate-200"
               title="Perfil"
             >
               <div className="h-8 w-8 rounded-full bg-white border border-slate-200 flex items-center justify-center">
-                <User className="h-4 w-4 text-slate-700" />
+                <div className="h-8 w-8 rounded-full bg-gradient-to-br from-slate-800 to-slate-600 text-white text-xs font-semibold flex items-center justify-center shadow-sm">
+                  {initials}
+                </div>{" "}
               </div>
             </button>
 
             {profileOpen && (
               <div className="absolute left-[76px] bottom-0 w-72 rounded-2xl border border-slate-200 bg-white shadow-lg p-2">
                 <div className="px-2 py-2">
-                  <div className="text-sm font-semibold text-slate-900">Kevin</div>
-                  <div className="text-xs text-slate-500">kevin@wbkrd.com</div>
+                  <div className="text-sm font-semibold text-slate-900">
+                    {displayName}
+                  </div>
+                  <div className="text-xs text-slate-500">{email}</div>
                 </div>
                 <div className="h-px bg-slate-100 my-2" />
-                <MenuItem icon={User} label="Ver perfil" />
-                <MenuItem icon={Settings} label="Ajustes de cuenta" />
-                <MenuItem icon={Bell} label="Notificaciones" />
+
+                {/* Estos quedan como placeholders por ahora */}
+                <MenuItem
+                  icon={User}
+                  label="Ver perfil"
+                  onClick={() => setProfileOpen(false)}
+                />
+                <MenuItem
+                  icon={Settings}
+                  label="Ajustes de cuenta"
+                  onClick={() => setProfileOpen(false)}
+                />
+                <MenuItem
+                  icon={Bell}
+                  label="Notificaciones"
+                  onClick={() => setProfileOpen(false)}
+                />
+
                 <div className="h-px bg-slate-100 my-2" />
-                <MenuItem icon={LogOut} label="Cerrar sesión" danger />
+                <MenuItem
+                  icon={LogOut}
+                  label="Cerrar sesión"
+                  danger
+                  onClick={logout}
+                />
               </div>
             )}
           </div>
@@ -187,7 +317,7 @@ export default function Sidebar() {
       <div
         className={cn(
           "bg-white border-r border-slate-200 overflow-hidden transition-all duration-200",
-          expanded ? "w-[320px]" : "w-0"
+          expanded ? "w-[320px]" : "w-0",
         )}
         onMouseEnter={() => setHovering(true)}
         onMouseLeave={() => setHovering(false)}
@@ -196,7 +326,9 @@ export default function Sidebar() {
           <div className="px-5 pt-5 pb-3">
             <div className="flex items-start justify-between">
               <div>
-                <div className="text-lg font-semibold text-slate-900">Inventario</div>
+                <div className="text-lg font-semibold text-slate-900">
+                  Inventario
+                </div>
                 <div className="text-xs text-slate-500">UI base (MVP)</div>
               </div>
 
@@ -210,8 +342,12 @@ export default function Sidebar() {
             </div>
 
             <div className="mt-4 flex gap-2 text-sm">
-              <button className="px-3 py-1.5 rounded-xl bg-slate-900 text-white">Módulos</button>
-              <button className="px-3 py-1.5 rounded-xl hover:bg-slate-100 text-slate-700">Aprender</button>
+              <button className="px-3 py-1.5 rounded-xl bg-slate-900 text-white">
+                Módulos
+              </button>
+              <button className="px-3 py-1.5 rounded-xl hover:bg-slate-100 text-slate-700">
+                Aprender
+              </button>
             </div>
           </div>
 
@@ -232,7 +368,9 @@ export default function Sidebar() {
                         className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-slate-100 text-slate-800"
                         onClick={() => toggleGroup(section.key)}
                       >
-                        <span className="text-sm font-medium">{section.label}</span>
+                        <span className="text-sm font-medium">
+                          {section.label}
+                        </span>
                         {isOpen ? (
                           <ChevronDown className="h-4 w-4 text-slate-500" />
                         ) : (
@@ -272,7 +410,9 @@ function NavItem({ icon: Icon, label, badge, to, indent }) {
         cn(
           "w-full flex items-center gap-3 px-3 py-2 rounded-xl transition",
           indent ? "ml-3" : "",
-          isActive ? "bg-slate-100 text-slate-900" : "text-slate-700 hover:bg-slate-50"
+          isActive
+            ? "bg-slate-100 text-slate-900"
+            : "text-slate-700 hover:bg-slate-50",
         )
       }
       end={to === "/"} // para que dashboard solo active en "/"
@@ -282,7 +422,7 @@ function NavItem({ icon: Icon, label, badge, to, indent }) {
           <span
             className={cn(
               "h-8 w-8 rounded-xl flex items-center justify-center",
-              isActive ? "bg-white border border-slate-200" : "bg-transparent"
+              isActive ? "bg-white border border-slate-200" : "bg-transparent",
             )}
           >
             <Icon className="h-4 w-4" />
@@ -300,12 +440,13 @@ function NavItem({ icon: Icon, label, badge, to, indent }) {
   );
 }
 
-function MenuItem({ icon: Icon, label, danger }) {
+function MenuItem({ icon: Icon, label, danger, onClick }) {
   return (
     <button
+      onClick={onClick}
       className={cn(
         "w-full flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-slate-50 text-sm",
-        danger ? "text-red-600" : "text-slate-700"
+        danger ? "text-red-600" : "text-slate-700",
       )}
     >
       <span className="h-9 w-9 rounded-xl bg-slate-100 flex items-center justify-center">
@@ -314,4 +455,23 @@ function MenuItem({ icon: Icon, label, danger }) {
       <span className="font-medium">{label}</span>
     </button>
   );
+}
+
+function getInitials(nameOrEmail) {
+  if (!nameOrEmail) return "U";
+
+  const clean = nameOrEmail.trim();
+
+  // Si viene de email
+  if (clean.includes("@")) {
+    return clean[0].toUpperCase();
+  }
+
+  const parts = clean.split(" ").filter(Boolean);
+
+  if (parts.length === 1) {
+    return parts[0][0].toUpperCase();
+  }
+
+  return (parts[0][0] + parts[1][0]).toUpperCase();
 }

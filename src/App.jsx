@@ -1,6 +1,15 @@
 import { Routes, Route } from "react-router-dom";
 import MainLayout from "./layout/MainLayout";
 
+//Auth!
+import Auth from "./pages/Auth";
+import RequireAuth from "./auth/RequireAuth";
+
+// Org
+import { OrgProvider } from "./org/OrgProvider";
+
+// Pages
+
 import Dashboard from "./pages/Dashboard";
 import Products from "./pages/Products";
 import Movements from "./pages/Movements";
@@ -24,25 +33,33 @@ const Placeholder = ({ title }) => (
 
 export default function App() {
   return (
-    <MainLayout>
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/products" element={<Products />} />
-        <Route path="/movements" element={<Movements />} />
+    <Routes>
+      <Route path="/auth" element={<Auth />} />
 
-        {/* placeholders (creamos estas pages luego) */}
-        <Route path="/categories" element={<Categories />} />
-        <Route path="/warehouses" element={<Warehouses />} />
-        <Route path="/inbound" element={<Inbound />} />
-        <Route path="/outbound" element={<Outbound />} />
-        <Route path="/suppliers" element={<Suppliers />} />
-        <Route path="/purchase-orders" element={<PurchaseOrders />} />
-        <Route path="/reports" element={<Reports />} />
-        <Route path="/settings" element={<Settings />} />
-
-        {/* fallback */}
-        <Route path="*" element={<Placeholder title="404" />} />
-      </Routes>
-    </MainLayout>
+      <Route
+        path="/*"
+        element={
+          <RequireAuth>
+            <OrgProvider>
+              <MainLayout>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/products" element={<Products />} />
+                  <Route path="/categories" element={<Categories />} />
+                  <Route path="/warehouses" element={<Warehouses />} />
+                  <Route path="/inbound" element={<Inbound />} />
+                  <Route path="/outbound" element={<Outbound />} />
+                  <Route path="/movements" element={<Movements />} />
+                  <Route path="/suppliers" element={<Suppliers />} />
+                  <Route path="/purchase-orders" element={<PurchaseOrders />} />
+                  <Route path="/reports" element={<Reports />} />
+                  <Route path="/settings" element={<Settings />} />
+                </Routes>
+              </MainLayout>
+            </OrgProvider>
+          </RequireAuth>
+        }
+      />
+    </Routes>
   );
 }

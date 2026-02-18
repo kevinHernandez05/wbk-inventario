@@ -1,76 +1,205 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { supabase } from "../lib/supabase";
+import { useOrg } from "../org/OrgProvider";
 import TableShell from "../ui/TableShell";
-import SearchInput from "../ui/SearchInput";
 
-const fakeCategories = [
-  { id: "CAT-001", name: "Bebidas", products: 24, status: "Activa" },
-  { id: "CAT-002", name: "Snacks", products: 18, status: "Activa" },
-  { id: "CAT-003", name: "Panadería", products: 9, status: "Activa" },
-  { id: "CAT-004", name: "Lácteos", products: 12, status: "Activa" },
-  { id: "CAT-005", name: "Limpieza", products: 7, status: "Inactiva" },
-];
+const cn = (...xs) => xs.filter(Boolean).join(" ");
 
 export default function Categories() {
-  const [q, setQ] = useState("");
+  const { orgId, loadingOrg } = useOrg();
 
-  const rows = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return fakeCategories;
-    return fakeCategories.filter((c) =>
-      [c.id, c.name, c.status].some((x) => String(x).toLowerCase().includes(s))
-    );
-  }, [q]);
+  const [categories, setCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+
+  const [form, setForm] = useState({
+    name: "",
+    description: "",
+    active: true,
+  });
+
+  useEffect(() => {
+    if (!orgId) return;
+    load();
+  }, [orgId]);
+
+  async function load() {
+    setLoading(true);
+
+    const { data, error } = await supabase
+      .from("categories")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false });
+
+    if (!error) setCategories(data || []);
+    else console.error(error);
+
+    setLoading(false);
+  }
+
+  function openCreate() {
+    setEditing(null);
+    setForm({ name: "", description: "", active: true });
+    setModalOpen(true);
+  }
+
+  function openEdit(row) {
+    setEditing(row);
+    setForm({
+      name: row.name,
+      description: row.description || "",
+      active: row.active,
+    });
+    setModalOpen(true);
+  }
+
+  async function save(e) {
+    e.preventDefault();
+
+    const payload = {
+      org_id: orgId,
+      name: form.name.trim(),
+      description: form.description,
+      active: form.active,
+    };
+
+    if (!payload.name) return alert("Nombre requerido");
+
+    if (!editing) {
+      await supabase.from("categories").insert(payload);
+    } else {
+      await supabase
+        .from("categories")
+        .update(payload)
+        .eq("id", editing.id);
+    }
+
+    setModalOpen(false);
+    load();
+  }
 
   return (
     <TableShell
       title="Categorías"
-      subtitle="Organiza tus productos por categoría. (Fake)"
-      right={<SearchInput value={q} onChange={setQ} placeholder="Buscar categoría..." />}
+      subtitle="Organiza tus productos por categoría"
       actions={
-        <button className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800">
+        <button
+          onClick={openCreate}
+          className="rounded-2xl bg-slate-900 px-4 py-2 text-sm text-white"
+        >
           Nueva categoría
         </button>
       }
     >
-      <div className="overflow-auto">
-        <table className="w-full text-sm">
-          <thead className="text-slate-500">
-            <tr className="border-b border-slate-200">
-              <th className="text-left font-medium py-3 pr-4">ID</th>
-              <th className="text-left font-medium py-3 pr-4">Nombre</th>
-              <th className="text-right font-medium py-3 pr-4">Productos</th>
-              <th className="text-left font-medium py-3 pr-4">Estado</th>
-            </tr>
-          </thead>
-          <tbody className="text-slate-800">
-            {rows.map((c) => (
-              <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="py-3 pr-4 font-medium text-slate-900">{c.id}</td>
-                <td className="py-3 pr-4">{c.name}</td>
-                <td className="py-3 pr-4 text-right font-semibold">{c.products}</td>
-                <td className="py-3 pr-4">
-                  <Badge tone={c.status === "Activa" ? "ok" : "muted"}>
-                    {c.status}
-                  </Badge>
-                </td>
+      {loading || loadingOrg ? (
+        <div className="text-sm text-slate-600">Cargando...</div>
+      ) : (
+        <div className="overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="text-slate-500">
+              <tr className="border-b border-slate-200">
+                <th className="text-left py-3 pr-4">Nombre</th>
+                <th className="text-left py-3 pr-4">Descripción</th>
+                <th className="text-left py-3 pr-4">Estado</th>
+                <th></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {categories.map((c) => (
+                <tr
+                  key={c.id}
+                  className="border-b border-slate-100 hover:bg-slate-50"
+                >
+                  <td className="py-3 pr-4 font-medium">{c.name}</td>
+                  <td className="py-3 pr-4 text-slate-600">
+                    {c.description || "—"}
+                  </td>
+                  <td className="py-3 pr-4">
+                    <span
+                      className={cn(
+                        "px-2 py-1 rounded-full text-xs border",
+                        c.active
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-slate-100 text-slate-600 border-slate-200"
+                      )}
+                    >
+                      {c.active ? "Activa" : "Inactiva"}
+                    </span>
+                  </td>
+                  <td className="text-right">
+                    <button
+                      onClick={() => openEdit(c)}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs"
+                    >
+                      Editar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modalOpen && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold mb-4">
+              {editing ? "Editar categoría" : "Nueva categoría"}
+            </h3>
+
+            <form onSubmit={save} className="space-y-4">
+              <input
+                className="w-full h-11 rounded-2xl border border-slate-200 px-3"
+                placeholder="Nombre"
+                value={form.name}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, name: e.target.value }))
+                }
+              />
+
+              <textarea
+                className="w-full rounded-2xl border border-slate-200 px-3 py-2"
+                placeholder="Descripción"
+                value={form.description}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, description: e.target.value }))
+                }
+              />
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={form.active}
+                  onChange={(e) =>
+                    setForm((s) => ({ ...s, active: e.target.checked }))
+                  }
+                />
+                Activa
+              </label>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  className="px-4 py-2 text-sm"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-sm bg-slate-900 text-white rounded-2xl"
+                >
+                  Guardar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </TableShell>
-  );
-}
-
-function Badge({ children, tone = "ok" }) {
-  const cls =
-    tone === "ok"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : "border-slate-200 bg-slate-50 text-slate-700";
-
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs border ${cls}`}>
-      {children}
-    </span>
   );
 }
