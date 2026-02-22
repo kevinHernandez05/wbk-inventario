@@ -1,15 +1,19 @@
 import { Routes, Route } from "react-router-dom";
 import MainLayout from "./layout/MainLayout";
 
-//Auth!
+//Auth
 import Auth from "./pages/Auth";
 import RequireAuth from "./auth/RequireAuth";
 
 // Org
 import { OrgProvider } from "./org/OrgProvider";
 
-// Pages
+// Profile & settings
+import Profile from "./pages/Profile";
+import AccountSettings from "./pages/AccountSettings";
+import Alerts from "./pages/Alerts";
 
+// Pages
 import Dashboard from "./pages/Dashboard";
 import Products from "./pages/Products";
 import Movements from "./pages/Movements";
@@ -54,6 +58,10 @@ export default function App() {
                   <Route path="/purchase-orders" element={<PurchaseOrders />} />
                   <Route path="/reports" element={<Reports />} />
                   <Route path="/settings" element={<Settings />} />
+
+                  <Route path="/profile" element={<Profile />} />
+                  <Route path="/account-settings" element={<AccountSettings />} />
+                  <Route path="/alerts" element={<Alerts />} />
                 </Routes>
               </MainLayout>
             </OrgProvider>

@@ -9,5 +9,9 @@ export const ROUTES = {
   suppliers: "/suppliers",
   purchase_orders: "/purchase-orders",
   reports: "/reports",
+  alerts: "/alerts",
+  profile: "/profile",
+  account: "/account-settings",
   settings: "/settings",
+  
 };

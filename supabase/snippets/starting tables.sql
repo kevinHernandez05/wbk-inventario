@@ -894,3 +894,959 @@ alter table inv.inventory_movements
   add constraint inventory_movements_warehouse_id_fkey
   foreign key (warehouse_id) references inv.warehouses(id)
   on delete restrict;
+
+
+
+
+
+
+
+create table if not exists inv.suppliers (
+    id uuid primary key default gen_random_uuid(),
+
+    org_id uuid not null,
+    name text not null,
+
+    email text,
+    phone text,
+
+    active boolean not null default true,
+
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+
+    created_by uuid
+);
+
+
+
+
+
+
+alter table inv.suppliers
+add constraint suppliers_org_fk
+foreign key (org_id)
+references inv.orgs(id)
+on delete cascade;
+
+
+
+
+
+
+create or replace function inv.set_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_suppliers_updated_at on inv.suppliers;
+
+create trigger trg_suppliers_updated_at
+before update on inv.suppliers
+for each row
+execute function inv.set_updated_at();
+
+
+
+
+
+alter table inv.suppliers enable row level security;
+
+
+
+
+create policy suppliers_select
+on inv.suppliers
+for select
+using (
+  exists (
+    select 1
+    from inv.org_members m
+    where m.org_id = suppliers.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+
+
+
+
+create policy suppliers_insert
+on inv.suppliers
+for insert
+with check (
+  exists (
+    select 1
+    from inv.org_members m
+    where m.org_id = suppliers.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+
+
+
+
+create policy suppliers_update
+on inv.suppliers
+for update
+using (
+  exists (
+    select 1
+    from inv.org_members m
+    where m.org_id = suppliers.org_id
+      and m.user_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1
+    from inv.org_members m
+    where m.org_id = suppliers.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+
+
+
+
+
+
+create policy suppliers_delete
+on inv.suppliers
+for delete
+using (
+  exists (
+    select 1
+    from inv.org_members m
+    where m.org_id = suppliers.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+
+
+
+create table if not exists inv.purchase_orders (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references inv.orgs(id) on delete cascade,
+
+  supplier_id uuid references inv.suppliers(id) on delete set null,
+
+  reference text,
+  status text not null default 'draft', -- draft | sent | received | cancelled
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid
+);
+
+create index if not exists purchase_orders_org_id_idx on inv.purchase_orders(org_id);
+create index if not exists purchase_orders_supplier_id_idx on inv.purchase_orders(supplier_id);
+create index if not exists purchase_orders_created_at_idx on inv.purchase_orders(created_at desc);
+
+
+
+
+create table if not exists inv.purchase_order_items (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references inv.orgs(id) on delete cascade,
+  purchase_order_id uuid not null references inv.purchase_orders(id) on delete cascade,
+
+  product_id uuid references inv.products(id) on delete set null,
+
+  quantity numeric not null default 1,
+  unit_cost numeric not null default 0,
+
+  created_at timestamptz not null default now()
+);
+
+create index if not exists po_items_po_id_idx on inv.purchase_order_items(purchase_order_id);
+create index if not exists po_items_org_id_idx on inv.purchase_order_items(org_id);
+
+
+
+
+
+create or replace function inv.set_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_purchase_orders_updated_at on inv.purchase_orders;
+
+create trigger trg_purchase_orders_updated_at
+before update on inv.purchase_orders
+for each row execute function inv.set_updated_at();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+alter table inv.purchase_orders enable row level security;
+alter table inv.purchase_order_items enable row level security;
+
+-- purchase_orders SELECT
+create policy po_select
+on inv.purchase_orders
+for select
+using (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = purchase_orders.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+-- purchase_orders INSERT
+create policy po_insert
+on inv.purchase_orders
+for insert
+with check (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = purchase_orders.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+-- purchase_orders UPDATE
+create policy po_update
+on inv.purchase_orders
+for update
+using (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = purchase_orders.org_id
+      and m.user_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = purchase_orders.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+-- purchase_orders DELETE
+create policy po_delete
+on inv.purchase_orders
+for delete
+using (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = purchase_orders.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+-- items SELECT
+create policy po_items_select
+on inv.purchase_order_items
+for select
+using (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = purchase_order_items.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+-- items INSERT/UPDATE/DELETE (mismo patrón)
+create policy po_items_insert
+on inv.purchase_order_items
+for insert
+with check (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = purchase_order_items.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+create policy po_items_update
+on inv.purchase_order_items
+for update
+using (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = purchase_order_items.org_id
+      and m.user_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = purchase_order_items.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+create policy po_items_delete
+on inv.purchase_order_items
+for delete
+using (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = purchase_order_items.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+
+
+
+alter table inv.products
+  add column if not exists cost numeric default 0;
+
+alter table inv.products
+  add column if not exists min_stock integer default 0;
+
+alter table inv.products
+  add column if not exists discount_pct numeric default 0;
+
+
+
+
+
+  create or replace function inv.report_stock_by_product(p_org uuid)
+returns table (
+  product_id uuid,
+  sku text,
+  name text,
+  stock numeric,
+  min_stock integer
+)
+language sql
+stable
+as $$
+  select
+    p.id as product_id,
+    p.sku,
+    p.name,
+    coalesce(sum(
+      case
+        when m.type = 'in' then m.quantity
+        when m.type = 'out' then -m.quantity
+        else 0
+      end
+    ), 0) as stock,
+    coalesce(p.min_stock, 0) as min_stock
+  from inv.products p
+  left join inv.inventory_movements m
+    on m.org_id = p.org_id
+   and m.product_id = p.id
+  where p.org_id = p_org
+    and exists (
+      select 1 from inv.org_members om
+      where om.org_id = p_org
+        and om.user_id = auth.uid()
+    )
+  group by p.id, p.sku, p.name, p.min_stock
+  order by p.name;
+$$;
+
+
+
+
+
+
+create or replace function inv.report_low_stock(p_org uuid)
+returns table (
+  product_id uuid,
+  sku text,
+  name text,
+  stock numeric,
+  min_stock integer
+)
+language sql
+stable
+as $$
+  select *
+  from inv.report_stock_by_product(p_org)
+  where stock <= min_stock
+  order by stock asc, name asc;
+$$;
+
+
+
+
+
+grant execute on function inv.report_stock_by_product(uuid) to authenticated;
+grant execute on function inv.report_low_stock(uuid) to authenticated;
+
+
+
+
+create table if not exists inv.settings (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references inv.orgs(id) on delete cascade,
+
+  business_name text not null default 'Inventario',
+  currency text not null default 'DOP', -- DOP | USD | EUR
+
+  low_stock_threshold integer not null default 0,
+  enable_alerts boolean not null default true,
+
+  time_zone text not null default 'America/Santo_Domingo',
+  date_format text not null default 'YYYY-MM-DD',
+  require_reference_on_movements boolean not null default false,
+
+  default_warehouse_id uuid references inv.warehouses(id) on delete set null,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid
+);
+
+create unique index if not exists settings_org_unique on inv.settings(org_id);
+
+
+
+
+create or replace function inv.set_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_settings_updated_at on inv.settings;
+
+create trigger trg_settings_updated_at
+before update on inv.settings
+for each row execute function inv.set_updated_at();
+
+
+
+
+alter table inv.settings enable row level security;
+
+create policy settings_select
+on inv.settings
+for select
+using (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = settings.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+create policy settings_insert
+on inv.settings
+for insert
+with check (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = settings.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+create policy settings_update
+on inv.settings
+for update
+using (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = settings.org_id
+      and m.user_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = settings.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+create policy settings_delete
+on inv.settings
+for delete
+using (
+  exists (
+    select 1 from inv.org_members m
+    where m.org_id = settings.org_id
+      and m.user_id = auth.uid()
+  )
+);
+
+
+
+
+
+create or replace function inv.dashboard_kpis(p_org uuid)
+returns table (
+  stock_total numeric,
+  low_stock_count integer,
+  inventory_value numeric,
+  movements_today integer
+)
+language sql
+stable
+as $$
+  with stock as (
+    select
+      p.id as product_id,
+      coalesce(sum(
+        case
+          when m.type = 'in' then m.quantity
+          when m.type = 'out' then -m.quantity
+          else 0
+        end
+      ), 0) as stock_qty,
+      coalesce(p.min_stock, 0) as min_stock,
+      coalesce(p.cost, 0) as cost
+    from inv.products p
+    left join inv.inventory_movements m
+      on m.org_id = p.org_id
+     and m.product_id = p.id
+    where p.org_id = p_org
+      and exists (
+        select 1 from inv.org_members om
+        where om.org_id = p_org
+          and om.user_id = auth.uid()
+      )
+    group by p.id, p.min_stock, p.cost
+  ),
+  today_moves as (
+    select count(*)::int as c
+    from inv.inventory_movements m
+    where m.org_id = p_org
+      and m.created_at >= date_trunc('day', now())
+      and m.type in ('in','out')
+      and exists (
+        select 1 from inv.org_members om
+        where om.org_id = p_org
+          and om.user_id = auth.uid()
+      )
+  )
+  select
+    coalesce((select sum(stock_qty) from stock), 0) as stock_total,
+    coalesce((select count(*)::int from stock where stock_qty <= min_stock), 0) as low_stock_count,
+    coalesce((select sum(stock_qty * cost) from stock), 0) as inventory_value,
+    coalesce((select c from today_moves), 0) as movements_today;
+$$;
+
+grant execute on function inv.dashboard_kpis(uuid) to authenticated;
+
+
+
+
+
+create or replace function inv.dashboard_top_products(p_org uuid, p_limit int default 5)
+returns table (
+  product_id uuid,
+  sku text,
+  name text,
+  qty numeric
+)
+language sql
+stable
+as $$
+  select
+    p.id,
+    p.sku,
+    p.name,
+    coalesce(sum(
+      case
+        when m.type = 'in' then m.quantity
+        when m.type = 'out' then -m.quantity
+        else 0
+      end
+    ), 0) as qty
+  from inv.products p
+  left join inv.inventory_movements m
+    on m.org_id = p.org_id
+   and m.product_id = p.id
+  where p.org_id = p_org
+    and exists (
+      select 1 from inv.org_members om
+      where om.org_id = p_org
+        and om.user_id = auth.uid()
+    )
+  group by p.id, p.sku, p.name
+  order by qty desc, p.name asc
+  limit greatest(1, p_limit);
+$$;
+
+grant execute on function inv.dashboard_top_products(uuid, int) to authenticated;
+
+
+create or replace function inv.dashboard_supply(p_org uuid)
+returns table (
+  month text,
+  inbound numeric,
+  outbound numeric
+)
+language sql
+stable
+as $$
+  with m as (
+    select
+      date_trunc('month', created_at) as mth,
+      sum(case when type='in' then quantity else 0 end) as inbound,
+      sum(case when type='out' then quantity else 0 end) as outbound
+    from inv.inventory_movements
+    where org_id = p_org
+      and created_at >= date_trunc('month', now()) - interval '5 months'
+      and type in ('in','out')
+      and exists (
+        select 1 from inv.org_members om
+        where om.org_id = p_org and om.user_id = auth.uid()
+      )
+    group by 1
+  )
+  select
+    to_char(mth, 'Mon') as month,
+    coalesce(inbound,0) as inbound,
+    coalesce(outbound,0) as outbound
+  from m
+  order by mth;
+$$;
+
+grant execute on function inv.dashboard_supply(uuid) to authenticated;
+
+
+
+create or replace function inv.dashboard_health(p_org uuid)
+returns table (
+  overall_ok_pct numeric,
+  under_pct numeric,
+  over_pct numeric,
+  low_count int,
+  ok_count int,
+  over_count int
+)
+language sql
+stable
+as $$
+  with stock as (
+    select
+      p.id,
+      coalesce(p.min_stock,0) as min_stock,
+      coalesce(sum(
+        case
+          when m.type='in' then m.quantity
+          when m.type='out' then -m.quantity
+          else 0
+        end
+      ),0) as qty
+    from inv.products p
+    left join inv.inventory_movements m
+      on m.org_id = p.org_id and m.product_id = p.id
+    where p.org_id = p_org
+      and exists (
+        select 1 from inv.org_members om
+        where om.org_id = p_org and om.user_id = auth.uid()
+      )
+    group by p.id, p.min_stock
+  ),
+  buckets as (
+    select
+      count(*)::int as total,
+      count(*) filter (where qty <= min_stock)::int as low,
+      count(*) filter (where qty > min_stock and qty <= (min_stock * 3))::int as ok,
+      count(*) filter (where qty > (min_stock * 3))::int as over
+    from stock
+  )
+  select
+    case when total=0 then 0 else round((ok::numeric/total)*100, 0) end as overall_ok_pct,
+    case when total=0 then 0 else round((low::numeric/total)*100, 0) end as under_pct,
+    case when total=0 then 0 else round((over::numeric/total)*100, 0) end as over_pct,
+    low as low_count,
+    ok as ok_count,
+    over as over_count
+  from buckets;
+$$;
+
+grant execute on function inv.dashboard_health(uuid) to authenticated;
+
+
+alter table inv.products
+  add column if not exists min_stock numeric default 0;
+
+alter table inv.products
+  add column if not exists max_stock numeric;
+
+alter table inv.products
+  add column if not exists expiration_date date;
+
+
+
+
+
+create or replace view inv.v_product_stock as
+select
+  p.org_id,
+  p.id as product_id,
+  coalesce(sum(
+    case
+      when m.type = 'in' then m.quantity
+      when m.type = 'out' then -m.quantity
+      else 0
+    end
+  ), 0) as stock
+from inv.products p
+left join inv.inventory_movements m
+  on m.product_id = p.id
+ and m.org_id = p.org_id
+group by p.org_id, p.id;
+
+
+
+
+create or replace function inv.alert_low_stock(p_org uuid)
+returns table (
+  product_id uuid,
+  sku text,
+  name text,
+  stock numeric,
+  min_stock numeric
+)
+language sql
+security definer
+set search_path = inv, public
+as $$
+  select
+    p.id as product_id,
+    p.sku,
+    p.name,
+    s.stock,
+    coalesce(p.min_stock, 0) as min_stock
+  from inv.products p
+  join inv.v_product_stock s
+    on s.product_id = p.id
+   and s.org_id = p.org_id
+  where p.org_id = p_org
+    and coalesce(p.active, true) = true
+    and s.stock <= coalesce(p.min_stock, 0)
+  order by (coalesce(p.min_stock, 0) - s.stock) desc, p.name asc;
+$$;
+
+revoke all on function inv.alert_low_stock(uuid) from public;
+grant execute on function inv.alert_low_stock(uuid) to authenticated;
+
+
+
+
+
+
+create or replace function inv.alerts_overstock(p_org uuid)
+returns table (
+  product_id uuid,
+  sku text,
+  name text,
+  stock numeric,
+  max_stock numeric
+)
+language sql
+security definer
+set search_path = inv, public
+as $$
+  select
+    p.id as product_id,
+    p.sku,
+    p.name,
+    s.stock,
+    p.max_stock
+  from inv.products p
+  join inv.v_product_stock s
+    on s.product_id = p.id
+   and s.org_id = p.org_id
+  where p.org_id = p_org
+    and coalesce(p.active, true) = true
+    and p.max_stock is not null
+    and s.stock >= p.max_stock
+  order by (s.stock - p.max_stock) desc, p.name asc;
+$$;
+
+revoke all on function inv.alerts_overstock(uuid) from public;
+grant execute on function inv.alerts_overstock(uuid) to authenticated;
+
+
+
+
+
+
+create or replace function inv.alerts_expiring(p_org uuid)
+returns table (
+  product_id uuid,
+  sku text,
+  name text,
+  expiration_date date,
+  days_left int
+)
+language sql
+security definer
+set search_path = inv, public
+as $$
+  select
+    p.id as product_id,
+    p.sku,
+    p.name,
+    p.expiration_date,
+    (p.expiration_date - current_date) as days_left
+  from inv.products p
+  where p.org_id = p_org
+    and coalesce(p.active, true) = true
+    and p.expiration_date is not null
+    and p.expiration_date <= (current_date + 30)
+  order by p.expiration_date asc, p.name asc;
+$$;
+
+revoke all on function inv.alerts_expiring(uuid) from public;
+grant execute on function inv.alerts_expiring(uuid) to authenticated;
+
+
+
+
+alter table inv.products
+  add column if not exists max_stock numeric(12,3) null;
+
+alter table inv.products
+  add column if not exists expiration_date date null;
+
+
+
+
+create or replace view inv.v_product_stock as
+select
+  p.org_id,
+  p.id as product_id,
+  coalesce(sum(
+    case
+      when m.type = 'in' then m.quantity
+      when m.type = 'out' then -m.quantity
+      else 0
+    end
+  ), 0) as stock
+from inv.products p
+left join inv.inventory_movements m
+  on m.org_id = p.org_id
+ and m.product_id = p.id
+group by p.org_id, p.id;
+
+
+
+
+create or replace function inv.alert_low_stock(p_org uuid)
+returns table (
+  product_id uuid,
+  sku text,
+  name text,
+  stock numeric,
+  min_stock numeric
+)
+language sql
+security definer
+set search_path = inv, public
+as $$
+  select
+    p.id as product_id,
+    p.sku,
+    p.name,
+    s.stock,
+    p.min_stock
+  from inv.products p
+  join inv.v_product_stock s
+    on s.org_id = p.org_id
+   and s.product_id = p.id
+  where p.org_id = p_org
+    and p.active = true
+    and s.stock <= p.min_stock
+  order by (p.min_stock - s.stock) desc, p.name asc;
+$$;
+
+revoke all on function inv.alert_low_stock(uuid) from public;
+grant execute on function inv.alert_low_stock(uuid) to authenticated;
+
+
+
+
+
+
+
+
+create or replace function inv.alerts_overstock(p_org uuid)
+returns table (
+  product_id uuid,
+  sku text,
+  name text,
+  stock numeric,
+  max_stock numeric
+)
+language sql
+security definer
+set search_path = inv, public
+as $$
+  select
+    p.id as product_id,
+    p.sku,
+    p.name,
+    s.stock,
+    p.max_stock
+  from inv.products p
+  join inv.v_product_stock s
+    on s.org_id = p.org_id
+   and s.product_id = p.id
+  where p.org_id = p_org
+    and p.active = true
+    and p.max_stock is not null
+    and s.stock >= p.max_stock
+  order by (s.stock - p.max_stock) desc, p.name asc;
+$$;
+
+revoke all on function inv.alerts_overstock(uuid) from public;
+grant execute on function inv.alerts_overstock(uuid) to authenticated;
+
+
+
+create or replace function inv.alerts_expiring(p_org uuid)
+returns table (
+  product_id uuid,
+  sku text,
+  name text,
+  expiration_date date,
+  days_left int
+)
+language sql
+security definer
+set search_path = inv, public
+as $$
+  select
+    p.id as product_id,
+    p.sku,
+    p.name,
+    p.expiration_date,
+    (p.expiration_date - current_date) as days_left
+  from inv.products p
+  where p.org_id = p_org
+    and p.active = true
+    and p.expiration_date is not null
+    and p.expiration_date <= (current_date + 30)
+  order by p.expiration_date asc, p.name asc;
+$$;
+
+revoke all on function inv.alerts_expiring(uuid) from public;
+grant execute on function inv.alerts_expiring(uuid) to authenticated;

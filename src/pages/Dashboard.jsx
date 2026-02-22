@@ -1,11 +1,237 @@
-import { Info, TrendingDown, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Info } from "lucide-react";
+import { supabase } from "../lib/supabase";
+import { useOrg } from "../org/OrgProvider";
+import { useNavigate } from "react-router-dom";
 import { dashboardFake } from "../ui/fakeData";
-import { kpiFake } from "../ui/fakeKpis";
 
 const cn = (...xs) => xs.filter(Boolean).join(" ");
 
+async function exportDashboardPdf({ orgId, kpis, topProducts }) {
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+
+  const margin = 48;
+  let y = margin;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("Dashboard - Inventario", margin, y);
+  y += 18;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(80);
+  doc.text(`Org: ${orgId}`, margin, y);
+  y += 14;
+  doc.text(`Generado: ${new Date().toISOString()}`, margin, y);
+  doc.setTextColor(0);
+  y += 22;
+
+  const lines = [
+    ["Stock total", String(Number(kpis.stockTotal || 0))],
+    ["Productos bajos", String(Number(kpis.lowStock || 0))],
+    ["Valor inventario", String(kpis.inventoryValueFormatted || "")],
+    ["Movimientos hoy", String(Number(kpis.movementsToday || 0))],
+  ];
+
+  doc.setFont("helvetica", "bold");
+  doc.text("KPIs", margin, y);
+  y += 14;
+
+  doc.setFont("helvetica", "normal");
+  for (const [k, v] of lines) {
+    doc.text(`${k}: ${v}`, margin, y);
+    y += 14;
+  }
+
+  y += 10;
+  doc.setFont("helvetica", "bold");
+  doc.text("Top productos (stock)", margin, y);
+  y += 14;
+
+  doc.setFont("helvetica", "normal");
+  if (!topProducts?.length) {
+    doc.text("—", margin, y);
+  } else {
+    for (const p of topProducts) {
+      doc.text(`${p.sku || "—"} | ${p.name || "—"} | ${Number(p.qty || 0)}`, margin, y);
+      y += 14;
+    }
+  }
+
+  doc.save("dashboard_inventario.pdf");
+}
+
+/**
+ * Normaliza un objeto con valores (a,b,c) a porcentajes que sumen 100.
+ * Si todo es 0, devuelve 0,0,0
+ */
+function toPct3(a, b, c) {
+  const A = Number(a || 0);
+  const B = Number(b || 0);
+  const C = Number(c || 0);
+  const sum = A + B + C;
+  if (!sum) return { w: 0, t: 0, r: 0 };
+  return {
+    w: Math.round((A / sum) * 100),
+    t: Math.round((B / sum) * 100),
+    r: Math.max(0, 100 - Math.round((A / sum) * 100) - Math.round((B / sum) * 100)),
+  };
+}
+
 export default function Dashboard() {
+  const { orgId, loadingOrg } = useOrg();
+  const nav = useNavigate();
+
+  // mantenemos los charts fake como base visual
   const d = dashboardFake;
+
+  const [loading, setLoading] = useState(true);
+
+  const [kpis, setKpis] = useState({
+    stockTotal: 0,
+    lowStock: 0,
+    inventoryValue: 0,
+    movementsToday: 0,
+  });
+
+  const [topProducts, setTopProducts] = useState([]);
+
+  // ✅ nuevos: supply + health reales
+  const [supplyBars, setSupplyBars] = useState(d.supply.bars);
+  const [supplyTotal, setSupplyTotal] = useState(d.supply.total);
+
+  const [health, setHealth] = useState({
+    overall: d.health.overall,
+    over: d.health.over,
+    under: d.health.under,
+  });
+
+  const money = useMemo(
+    () =>
+      new Intl.NumberFormat("es-DO", {
+        style: "currency",
+        currency: "DOP",
+        maximumFractionDigits: 2,
+      }),
+    []
+  );
+
+  useEffect(() => {
+    if (!orgId) return;
+    loadDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId]);
+
+  async function loadDashboard() {
+    setLoading(true);
+
+    const [
+      { data: kData, error: kErr },
+      { data: tData, error: tErr },
+      { data: sData, error: sErr },
+      { data: hData, error: hErr },
+    ] = await Promise.all([
+      supabase.rpc("dashboard_kpis", { p_org: orgId }),
+      supabase.rpc("dashboard_top_products", { p_org: orgId, p_limit: 5 }),
+      supabase.rpc("dashboard_supply", { p_org: orgId }),
+      supabase.rpc("dashboard_health", { p_org: orgId }),
+    ]);
+
+    if (kErr) console.error(kErr);
+    if (tErr) console.error(tErr);
+    if (sErr) console.error(sErr);
+    if (hErr) console.error(hErr);
+
+    const k = (kData && kData[0]) || null;
+
+    setKpis({
+      stockTotal: Number(k?.stock_total || 0),
+      lowStock: Number(k?.low_stock_count || 0),
+      inventoryValue: Number(k?.inventory_value || 0),
+      movementsToday: Number(k?.movements_today || 0),
+    });
+
+    setTopProducts(
+      (tData || []).map((x) => ({
+        sku: x.sku,
+        name: x.name,
+        qty: Number(x.qty || 0),
+      }))
+    );
+
+    /**
+     * Supply:
+     * Soporta 2 formas comunes:
+     * A) rows con {month, warehouse, in_transport, retail}
+     * B) rows con {month, inbound, outbound} -> lo mapeamos a 3 segmentos
+     */
+    if (Array.isArray(sData) && sData.length) {
+      const normalized = sData.slice(0, 6).map((row) => {
+        if ("warehouse" in row || "in_transport" in row || "retail" in row) {
+          const pct = toPct3(row.warehouse, row.in_transport, row.retail);
+          return { w: pct.w, t: pct.t, r: pct.r, month: row.month };
+        }
+        // fallback inbound/outbound
+        const pct = toPct3(row.inbound, row.outbound, 0);
+        return { w: pct.w, t: pct.t, r: pct.r, month: row.month };
+      });
+
+      setSupplyBars(normalized.map((x) => ({ w: x.w, t: x.t, r: x.r })));
+
+      // total “bonito” arriba: suma de valores crudos si existen, si no, usa movementsToday * algo
+      const total =
+        sData.reduce((acc, row) => {
+          const a = Number(row.warehouse ?? row.inbound ?? 0);
+          const b = Number(row.in_transport ?? row.outbound ?? 0);
+          const c = Number(row.retail ?? 0);
+          return acc + a + b + c;
+        }, 0) || 0;
+
+      setSupplyTotal(total || d.supply.total);
+    } else {
+      // si no hay data, mantenemos fake visual
+      setSupplyBars(d.supply.bars);
+      setSupplyTotal(d.supply.total);
+    }
+
+    /**
+     * Health:
+     * esperamos algo como { overall, over, under } (en %)
+     * o { overall_ok_pct, over_pct, under_pct }
+     */
+    const h = (hData && hData[0]) || null;
+    if (h) {
+      setHealth({
+        overall: Number(h.overall ?? h.overall_ok_pct ?? d.health.overall),
+        over: Number(h.over ?? h.over_pct ?? d.health.over),
+        under: Number(h.under ?? h.under_pct ?? d.health.under),
+      });
+    }
+
+    setLoading(false);
+  }
+
+  const computed = useMemo(() => {
+    return {
+      ...kpis,
+      inventoryValueFormatted: money.format(kpis.inventoryValue || 0),
+    };
+  }, [kpis, money]);
+
+  async function onExport() {
+    await exportDashboardPdf({ orgId, kpis: computed, topProducts });
+  }
+
+  // Para mantener tu look de 3 barras abajo
+  const healthBars = useMemo(() => {
+    return [
+      { label: "Healthy", note: "Stock estable", height: Math.max(0, Math.min(100, health.overall)), base: "bg-cyan-500/80", hatched: false },
+      { label: "Watchlist", note: "Revisar rotación", height: Math.max(0, Math.min(100, health.over)), base: "bg-emerald-500/70", hatched: true },
+      { label: "Risk", note: "Bajo stock", height: Math.max(0, Math.min(100, health.under)), base: "bg-sky-500/70", hatched: false },
+    ];
+  }, [health]);
 
   return (
     <div className="space-y-6">
@@ -14,44 +240,37 @@ export default function Dashboard() {
         <div>
           <div className="text-sm text-slate-500">Inventario</div>
           <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
-          <p className="text-slate-600 mt-1">
-            Vista rápida del estado de tu inventario
-          </p>
+          <p className="text-slate-600 mt-1">Vista rápida del estado de tu inventario</p>
         </div>
 
         <div className="flex items-center gap-2">
-          <button className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
+          <button
+            onClick={onExport}
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
             Exportar
           </button>
-          <button className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800">
+
+          <button
+            onClick={() => nav("/inbound")}
+            className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800"
+          >
             Nuevo movimiento
           </button>
         </div>
       </div>
 
-      <KpiRow />
+      <KpiRow loading={loadingOrg || loading} kpis={computed} topProducts={topProducts} />
 
-      {/* Grid */}
+      {/* Grid: SOLO Supply + Inventory Health (mismo estilo del mock) */}
       <div className="grid grid-cols-12 gap-6">
-        {/* Card 1: Gauge */}
-        <Card className="col-span-12 lg:col-span-6">
-          <CardHeader title="Supplier on Time Delivery" />
-          <div className="flex flex-col items-center justify-center gap-4 py-2">
-            <Gauge value={d.onTimeDelivery.value} />
-            <div className="flex items-center gap-3">
-              <Pill icon={TrendingDown} text={`Trend`} />
-              <Pill text={`Goal ${d.onTimeDelivery.goal}`} danger />
-            </div>
-          </div>
-        </Card>
-
-        {/* Card 2: Supply bars */}
+        {/* Supply */}
         <Card className="col-span-12 lg:col-span-6">
           <div className="flex items-start justify-between">
             <div>
               <div className="text-sm font-medium text-slate-700">Supply</div>
               <div className="mt-1 text-4xl font-semibold text-slate-900">
-                {d.supply.total}
+                {loadingOrg || loading ? "—" : supplyTotal}
               </div>
             </div>
 
@@ -63,7 +282,7 @@ export default function Dashboard() {
           </div>
 
           <div className="mt-5">
-            <FakeStackedBars data={d.supply.bars} />
+            <FakeStackedBars data={supplyBars} />
             <div className="mt-4">
               <Legend
                 items={[
@@ -76,49 +295,18 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        {/* Card 3: Previous vs Current + forecast */}
-        <Card className="col-span-12 lg:col-span-6">
-          <div className="flex items-start justify-between">
-            <div className="flex gap-12">
-              <Metric label="Previous" value={d.forecast.previous} />
-              <Metric label="Current" value={d.forecast.current} />
-            </div>
-            <div className="flex items-center gap-2 text-slate-400">
-              <span className="inline-flex h-5 w-1 rounded-full bg-orange-500/90" />
-              <span className="inline-flex h-5 w-1 rounded-full bg-orange-500/60" />
-              <span className="inline-flex h-5 w-1 rounded-full bg-orange-500/40" />
-            </div>
-          </div>
-
-          <div className="mt-5">
-            <FakeBars data={d.forecast.bars} />
-          </div>
-
-          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 flex gap-3">
-            <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white shadow-sm">
-              <Sparkles className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-slate-900">AI Forecast</div>
-              <div className="text-sm text-slate-600 mt-0.5">
-                Rising demand forecasts indicates an increase in fulfillment capacity would be needed.
-              </div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Card 4: Inventory health */}
+        {/* Inventory health */}
         <Card className="col-span-12 lg:col-span-6">
           <CardHeader title="Inventory Health" />
 
           <div className="grid grid-cols-3 gap-3">
-            <Stat label="Overall Health" value={d.health.overall} />
-            <Stat label="Overcapacity" value={d.health.over} />
-            <Stat label="Undercapacity" value={d.health.under} />
+            <Stat label="Overall Health" value={loadingOrg || loading ? d.health.overall : health.overall} />
+            <Stat label="Overcapacity" value={loadingOrg || loading ? d.health.over : health.over} />
+            <Stat label="Undercapacity" value={loadingOrg || loading ? d.health.under : health.under} />
           </div>
 
           <div className="mt-6">
-            <InventoryHealthBars data={d.health.bars} />
+            <InventoryHealthBars data={healthBars} />
           </div>
         </Card>
       </div>
@@ -152,79 +340,22 @@ function CardHeader({ title }) {
   );
 }
 
-function Metric({ label, value }) {
-  return (
-    <div>
-      <div className="text-sm text-slate-500">{label}</div>
-      <div className="mt-1 text-5xl font-semibold text-slate-900">{value}%</div>
-    </div>
-  );
-}
-
 function Stat({ label, value }) {
   return (
     <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
-      <div className="text-2xl font-semibold text-slate-900">{value}%</div>
+      <div className="text-2xl font-semibold text-slate-900">{Number(value || 0)}%</div>
       <div className="text-sm text-slate-500">{label}</div>
     </div>
   );
 }
 
-function Pill({ icon: Icon, text, danger }) {
-  return (
-    <div
-      className={cn(
-        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm",
-        danger
-          ? "border-red-200 bg-red-50 text-red-700"
-          : "border-slate-200 bg-white text-slate-700"
-      )}
-    >
-      {Icon ? <Icon className={cn("h-4 w-4", danger ? "text-red-600" : "text-slate-600")} /> : null}
-      <span className="font-medium">{text}</span>
-    </div>
-  );
-}
-
-/* ---------------- Fake charts ---------------- */
-
-function Gauge({ value = 87 }) {
-  // Semicírculo con conic-gradient + máscara
-  // Mapeo 0..100 -> 0..180deg aprox, pero con conic queda fácil:
-  const deg = Math.max(0, Math.min(100, value)) * 1.8;
-
-  return (
-    <div className="relative h-56 w-56">
-      {/* Base ring */}
-      <div
-        className="absolute inset-0 rounded-full"
-        style={{
-          background: `conic-gradient(#22c55e 0deg, #06b6d4 ${deg}deg, #e2e8f0 ${deg}deg, #e2e8f0 360deg)`,
-        }}
-      />
-      {/* Mask to make it a ring */}
-      <div className="absolute inset-4 rounded-full bg-white" />
-
-      {/* Mask bottom half to look like semi gauge */}
-      <div className="absolute left-0 right-0 bottom-0 h-1/2 bg-white" />
-
-      {/* Value */}
-      <div className="absolute inset-0 flex items-center justify-center pt-12">
-        <div className="text-5xl font-semibold text-slate-900">
-          {value}
-          <span className="text-2xl text-slate-700">%</span>
-        </div>
-      </div>
-    </div>
-  );
-}
+/* ---------------- Fake charts (SIN CAMBIAR TU LOOK) ---------------- */
 
 function FakeStackedBars({ data }) {
-  // data: [{ w, t, r }] en %
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="h-36 flex items-end gap-2">
-        {data.map((b, idx) => (
+        {(data || []).map((b, idx) => (
           <div key={idx} className="flex-1 flex flex-col justify-end">
             <div className="w-full rounded-lg overflow-hidden border border-slate-200 bg-white">
               <div className="flex flex-col h-28">
@@ -238,56 +369,23 @@ function FakeStackedBars({ data }) {
       </div>
 
       <div className="mt-3 flex justify-between text-xs text-slate-400">
-        <span>May</span>
-        <span>Jun</span>
-        <span>Jul</span>
-        <span>Aug</span>
-        <span>Sep</span>
-        <span>Oct</span>
-      </div>
-    </div>
-  );
-}
-
-function FakeBars({ data }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <div className="h-36 flex items-end gap-2">
-        {data.map((h, idx) => (
-          <div key={idx} className="flex-1">
-            <div className="h-28 w-full rounded-lg bg-white border border-slate-200 flex items-end overflow-hidden">
-              <div
-                className="w-full bg-cyan-500/70"
-                style={{ height: `${h}%` }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-3 flex justify-between text-xs text-slate-400">
-        <span>May</span>
-        <span>Jun</span>
-        <span>Jul</span>
-        <span>Aug</span>
-        <span>Sep</span>
-        <span>Oct</span>
+        <span>May</span><span>Jun</span><span>Jul</span><span>Aug</span><span>Sep</span><span>Oct</span>
       </div>
     </div>
   );
 }
 
 function InventoryHealthBars({ data }) {
-  // 3 barras tipo tu referencia (con una con rayitas)
   return (
     <div className="grid grid-cols-3 gap-5">
-      {data.map((b, idx) => (
+      {(data || []).map((b, idx) => (
         <div key={idx} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
           <div className="h-40 w-full rounded-2xl bg-white border border-slate-200 overflow-hidden flex items-end">
             <div className="w-full relative" style={{ height: `${b.height}%` }}>
               <div className={cn("absolute inset-0", b.base)} />
               {b.hatched ? (
-                <div className="absolute inset-0 opacity-40"
+                <div
+                  className="absolute inset-0 opacity-40"
                   style={{
                     backgroundImage:
                       "repeating-linear-gradient(135deg, rgba(255,255,255,0.0) 0px, rgba(255,255,255,0.0) 6px, rgba(255,255,255,0.65) 6px, rgba(255,255,255,0.65) 10px)",
@@ -318,35 +416,34 @@ function Legend({ items }) {
   );
 }
 
-function KpiRow() {
-  const k = kpiFake;
-
-  const money = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 2,
-  });
-
+function KpiRow({ loading, kpis, topProducts }) {
   return (
     <div className="grid grid-cols-12 gap-4">
-      <KpiCard className="col-span-12 sm:col-span-6 lg:col-span-3" label="Stock total" value={k.stockTotal.toLocaleString()} sub="Unidades en sistema" />
-      <KpiCard className="col-span-12 sm:col-span-6 lg:col-span-3" label="Productos bajos" value={k.lowStock} sub="Bajo stock mínimo" />
-      <KpiCard className="col-span-12 sm:col-span-6 lg:col-span-3" label="Valor inventario" value={money.format(k.inventoryValue)} sub="Costo estimado" />
-      <KpiCard className="col-span-12 sm:col-span-6 lg:col-span-3" label="Movimientos hoy" value={k.movementsToday} sub="Entradas + Salidas" />
+      <KpiCard className="col-span-12 sm:col-span-6 lg:col-span-3" label="Stock total" value={loading ? "—" : Number(kpis.stockTotal || 0).toLocaleString()} sub="Unidades en sistema" />
+      <KpiCard className="col-span-12 sm:col-span-6 lg:col-span-3" label="Productos bajos" value={loading ? "—" : Number(kpis.lowStock || 0)} sub="Bajo stock mínimo" />
+      <KpiCard className="col-span-12 sm:col-span-6 lg:col-span-3" label="Valor inventario" value={loading ? "—" : (kpis.inventoryValueFormatted || "—")} sub="Costo estimado" />
+      <KpiCard className="col-span-12 sm:col-span-6 lg:col-span-3" label="Movimientos hoy" value={loading ? "—" : Number(kpis.movementsToday || 0)} sub="Entradas + Salidas" />
 
       <div className="col-span-12">
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
           <div className="text-sm font-medium text-slate-700">Top productos (stock)</div>
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
-            {k.topProducts.map((p) => (
-              <div key={p.sku} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-sm font-semibold text-slate-900 truncate">{p.name}</div>
-                <div className="text-xs text-slate-500 mt-1">{p.sku}</div>
-                <div className="mt-3 text-2xl font-semibold text-slate-900">{p.qty}</div>
-                <div className="text-xs text-slate-500">unidades</div>
-              </div>
-            ))}
-          </div>
+
+          {loading ? (
+            <div className="mt-3 text-sm text-slate-600">Cargando...</div>
+          ) : topProducts?.length ? (
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+              {topProducts.map((p) => (
+                <div key={`${p.sku}-${p.name}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-semibold text-slate-900 truncate">{p.name}</div>
+                  <div className="text-xs text-slate-500 mt-1">{p.sku || "—"}</div>
+                  <div className="mt-3 text-2xl font-semibold text-slate-900">{Number(p.qty || 0)}</div>
+                  <div className="text-xs text-slate-500">unidades</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-3 text-sm text-slate-600">No hay productos todavía.</div>
+          )}
         </div>
       </div>
     </div>
@@ -362,4 +459,3 @@ function KpiCard({ label, value, sub, className }) {
     </div>
   );
 }
-
